@@ -4,14 +4,14 @@ from typing import Awaitable, Callable, Dict, Any, List, Optional, Tuple
 
 Scope = Dict[str, Any]
 Receive = Callable[[], Awaitable[Dict[str, Any]]]
-Send = Callable [[Dict[str, Any]], Awaitable[None]]
+Send = Callable[[Dict[str, Any]], Awaitable[None]]
 Handler = Callable[..., Awaitable['Response']]
 Middleware = Callable[[Callable[[Scope, Receive, Send], Awaitable[None]]],
                     Callable[[Scope, Receive, Send], Awaitable[None]]]
 
 
 class Request:
-    def __init__(self, scope:Scope, receive:Receive):
+    def __init__(self, scope: Scope, receive: Receive):
         assert scope['type'] == 'http'
         self.scope = scope
         self._receive = receive
@@ -24,11 +24,11 @@ class Request:
     @property
     def path(self) -> str:
         return self.scope['path']
-    
+
     @property
-    def headers(self) -> str:
-        return {k.decode().lower(): v.decode() for k, v in self.scope['Headers']}
-    
+    def headers(self) -> Dict[str, str]:
+        return {k.decode().lower(): v.decode() for k, v in self.scope["headers"]}
+
     @property
     def query_params(self) -> Dict[str, str]:
         raw = self.scope.get('query_string', b"") or b""
@@ -44,18 +44,16 @@ class Request:
                     k, v = pair, ""
                 params[k] = v
         return params
-    
+
     async def body(self) -> bytes:
         if self._body is None:
             chunks = []
             more = True
-
             while more:
                 msg = await self._receive()
                 if msg['type'] == "http.request":
                     chunks.append(msg.get("body", b""))
                     more = msg.get("more_body", False)
-
                 else:
                     more = False
             self._body = b"".join(chunks)
@@ -66,7 +64,8 @@ class Request:
         if not b:
             return None
         return json.loads(b.decode())
-    
+
+
 class Response:
     def __init__(self,
                  content: bytes | str | dict | list | None = b"",
@@ -94,11 +93,12 @@ class Response:
                 self.headers.append(("content-type", media_type))
         else:
             raise TypeError("Unsupported content type for Response")
-        
+
     @classmethod
     def json(cls, data: Any, status: int = 200, headers: Optional[List[Tuple[str, str]]] = None):
         return cls(data, status=status, headers=headers or [])
-    
+
+
 class Route:
     def __init__(self, method: str, path: str, handler: Handler):
         self.method = method.upper()
@@ -106,7 +106,7 @@ class Route:
         self.param_names, self.regex = self._compile(path)
         self.handler = handler
 
-    def _compile(self, path:str) -> Tuple[List[str], re.Pattern]:
+    def _compile(self, path: str) -> Tuple[List[str], re.Pattern]:
         param_names: List[str] = []
         regex_str = "^"
         i = 0
@@ -122,10 +122,11 @@ class Route:
             else:
                 c = re.escape(path[i])
                 regex_str += c
-                i +=1
+                i += 1
 
         regex_str += "$"
         return param_names, re.compile(regex_str)
+
     def matches(self, method: str, path: str) -> Optional[Dict[str, str]]:
         if method.upper() != self.method:
             return None
@@ -133,7 +134,7 @@ class Route:
         if not m:
             return None
         return m.groupdict()
-    
+
 
 class Router:
     def __init__(self):
@@ -148,30 +149,34 @@ class Router:
             if params is not None:
                 return r, params
         return None, {}
-    
+
+
 class Lilac:
     def __init__(self):
         self.router = Router()
         self._middleware: List[Middleware] = []
+
     def route(self, method: str, path: str):
-        def decorator(func:Handler):
+        def decorator(func: Handler):
             self.router.add(method, path, func)
             return func
         return decorator
-    
+
     def get(self, path: str): return self.route("GET", path)
     def post(self, path: str): return self.route("POST", path)
     def put(self, path: str): return self.route("PUT", path)
     def patch(self, path: str): return self.route("PATCH", path)
     def delete(self, path: str): return self.route("DELETE", path)
+
     def use(self, mw: Middleware):
         self._middleware.append(mw)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await send({"type": "http.response.start", "status": 404, "headers": []})
             await send({"type": "http.response.body", "body": b"Not Found"})
             return
-        
+
         async def endpoint(scope: Scope, receive: Receive, send: Send):
             req = Request(scope, receive)
             route, params = self.router.find(req.method, req.path)
@@ -184,22 +189,23 @@ class Lilac:
                         resp = Response(resp)
                 except HTTPError as he:
                     resp = Response.json({"detail": he.detail}, status=he.status)
-                except Exception as e:
+                except Exception:
                     resp = Response.json({"detail": "Internal Server Error"}, status=500)
             headers = [(k.encode(), v.encode()) for k, v in resp.headers]
             await send({"type": "http.response.start", "status": resp.status, "headers": headers})
             await send({"type": "http.response.body", "body": resp.body_bytes})
+
         app = endpoint
         for mw in reversed(self._middleware):
             app = mw(app)
         await app(scope, receive, send)
+
 
 class HTTPError(Exception):
     def __init__(self, status: int, detail: str = ""):
         self.status = status
         self.detail = detail or f"HTTP {status}"
         super().__init__(self.detail)
-
 
 
 app = Lilac()
@@ -228,7 +234,8 @@ async def echo(req: Request):
     data = await req.json()
     if not isinstance(data, dict):
         raise HTTPError(400, "Expected JSON object")
-    return {"you_sent": data} 
+    return {"you_sent": data}
+
 
 @app.get("/health")
 async def health(req: Request):
