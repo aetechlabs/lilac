@@ -100,7 +100,7 @@ class Response:
         return cls(data, status=status, headers=headers or [])
     
 class Route:
-    def __ini__(self, method: str, path: str, handler: Handler):
+    def __init__(self, method: str, path: str, handler: Handler):
         self.method = method.upper()
         self.path = path
         self.param_names, self.regex = self._compile(path)
@@ -151,7 +151,7 @@ class Router:
     
 class Lilac:
     def __init__(self):
-        self.router = Route()
+        self.router = Router()
         self._middleware: List[Middleware] = []
     def route(self, method: str, path: str):
         def decorator(func:Handler):
@@ -163,7 +163,7 @@ class Lilac:
     def post(self, path: str): return self.route("POST", path)
     def put(self, path: str): return self.route("PUT", path)
     def patch(self, path: str): return self.route("PATCH", path)
-    def delete(self, path: str): return self.roue("DELETE", path)
+    def delete(self, path: str): return self.route("DELETE", path)
     def use(self, mw: Middleware):
         self._middleware.append(mw)
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
@@ -199,3 +199,37 @@ class HTTPError(Exception):
         self.status = status
         self.detail = detail or f"HTTP {status}"
         super().__init__(self.detail)
+
+
+
+app = Lilac()
+
+
+def logger_middleware(next_app):
+    async def _inner(scope, receive, send):
+        if scope["type"] == "http":
+            method = scope["method"]
+            path = scope["path"]
+            print(f"{method} {path}")
+        return await next_app(scope, receive, send)
+    return _inner
+
+
+app.use(logger_middleware)
+
+
+@app.get("/hello/{name}")
+async def hello(req: Request, name: str):
+    return Response.json({"message": f"Hello, {name}"})
+
+
+@app.post("/echo")
+async def echo(req: Request):
+    data = await req.json()
+    if not isinstance(data, dict):
+        raise HTTPError(400, "Expected JSON object")
+    return {"you_sent": data} 
+
+@app.get("/health")
+async def health(req: Request):
+    return Response("ok")
