@@ -61,3 +61,27 @@ class Request:
             self._body = b"".join(chunks)
         return self._body
 
+    async def json(self) -> Any:
+        b = await self.body()
+        if not b:
+            return None
+        return json.loads(b.decode())
+    
+class Response:
+    def __init__(self,
+                 content: bytes | str | dict | list | None = b"",
+                 status: int = 200,
+                 headers: Optional[List[Tuple[str, str]]] = None,
+                 media_type: Optional[str] = None
+                 ):
+        self.status = status
+        self.headers = headers or []
+        self.body_bytes: bytes
+
+        if isinstance(content, (dict, list)):
+            self.body_bytes = json.dumps(content).encode()
+            self.headers.append(("content-type", "application/json; charset=utf-8"))
+        elif isinstance(content, str):
+            self.body_bytes = content.encode()
+            self.headers.append(("content-type", media_type or "text/plain; charset=utf-8"))
+
