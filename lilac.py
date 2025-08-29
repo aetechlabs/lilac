@@ -1,6 +1,7 @@
 import re
 import json
 from typing import Awaitable, Callable, Dict, Any, List, Optional, Tuple
+from urllib.parse import parse_qs
 
 Scope = Dict[str, Any]
 Receive = Callable[[], Awaitable[Dict[str, Any]]]
@@ -134,7 +135,54 @@ class Route:
         if not m:
             return None
         return m.groupdict()
+    
+    async def handle(self, scope, receive, send):
+        method = scope["method"]
+        path = scope["path"]
 
+        raw_query = scope.get("query_strings", b"").decode("utf-8")
+        query_params = {k: v[0] if len(v) == 1 else v
+                        for k, v in parse_qs(raw_query).items()}
+
+        handler = self.routes.get(method, {}).get(path)
+        if not handler:
+            await self._send_response(send, 404, {"error": "Not Found"})
+            return
+        
+        if method == "GET":
+            response = handler()
+
+        elif method == "POST":
+            body = b""
+            more_body = True
+            while more_body:
+                message = await receive()
+                body += message.get("body", b"")
+                more_body = message.get("more_body", False)
+
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                data = {}
+
+            response = handler(data)
+
+        else:
+            response = {"error": "Method not supported"}
+
+        await self._send_response(send, 200, response)
+
+    async def _send_response(self, send, status, content):
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json")]
+        })
+
+        await send({
+            "type": "http.response.body",
+            "body": json.dumps(content).encode("utf-8"),
+        })
 
 class Router:
     def __init__(self):
@@ -207,36 +255,3 @@ class HTTPError(Exception):
         self.detail = detail or f"HTTP {status}"
         super().__init__(self.detail)
 
-
-app = Lilac()
-
-
-def logger_middleware(next_app):
-    async def _inner(scope, receive, send):
-        if scope["type"] == "http":
-            method = scope["method"]
-            path = scope["path"]
-            print(f"{method} {path}")
-        return await next_app(scope, receive, send)
-    return _inner
-
-
-app.use(logger_middleware)
-
-
-@app.get("/hello/{name}")
-async def hello(req: Request, name: str):
-    return Response.json({"message": f"Hello, {name}"})
-
-
-@app.post("/echo")
-async def echo(req: Request):
-    data = await req.json()
-    if not isinstance(data, dict):
-        raise HTTPError(400, "Expected JSON object")
-    return {"you_sent": data}
-
-
-@app.get("/health")
-async def health(req: Request):
-    return Response("ok")

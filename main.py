@@ -1,4 +1,5 @@
-from lilac import *
+from lilac import Lilac, Request, Response, HTTPError
+
 
 app = Lilac()
 
@@ -19,3 +20,16 @@ app.use(logger_middleware)
 @app.get("/hello/{name}")
 async def hello(req: Request, name: str):
     return Response.json({"message": f"Hello, {name}"})
+
+
+@app.post("/echo")
+async def echo(req: Request):
+    data = await req.json()
+    if not isinstance(data, dict):
+        raise HTTPError(400, "Expected JSON object")
+    return {"you_sent": data}
+
+
+@app.get("/health")
+async def health(req: Request):
+    return Response("ok")
